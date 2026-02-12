@@ -204,10 +204,15 @@ export default function App() {
     setCoverage(getCoverage(explored, center[0], center[1]));
   }, [explored, userPos, mapCenter]);
 
-  // Start tracking when entering map phase
+  // Start watch-based tracking (for ongoing updates after initial permission)
   useEffect(() => {
-    if (phase === 'map' && tracking) {
-      startTracking();
+    if (phase === 'map' && tracking && watchRef.current === null) {
+      // On returning users (already onboarded), start tracking from useEffect.
+      // For new users, tracking is started directly from the button tap handler.
+      const alreadyOnboarded = localStorage.getItem('uncover_onboarded');
+      if (alreadyOnboarded) {
+        startTracking();
+      }
     }
     return () => stopTracking();
   }, [phase, tracking, startTracking, stopTracking]);
@@ -219,6 +224,42 @@ export default function App() {
     }
   }, [phase, explored, doInitialReveal, mapCenter]);
 
+  // Handle the "Start Exploring" tap — request location DIRECTLY in the click handler
+  // so iOS Safari shows the permission prompt (requires user gesture context)
+  const handleStartExploring = () => {
+    localStorage.setItem('uncover_onboarded', '1');
+
+    if (navigator.geolocation) {
+      // Fire getCurrentPosition synchronously in the tap handler — this is what
+      // triggers the iOS permission prompt. watchPosition is started after.
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const { latitude, longitude } = pos.coords;
+          setUserPos([latitude, longitude]);
+          localStorage.setItem('uncover_last_center', JSON.stringify([latitude, longitude]));
+          hasInitialReveal.current = true;
+          revealCells(latitude, longitude);
+          setPhase('map');
+          // Now start the continuous watch
+          startTracking();
+        },
+        (err) => {
+          console.warn('Initial geolocation error:', err);
+          setLocationFailed(true);
+          setPhase('map');
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0,
+        }
+      );
+    } else {
+      setLocationFailed(true);
+      setPhase('map');
+    }
+  };
+
   // Onboarding screen
   if (phase === 'onboard') {
     return (
@@ -229,10 +270,7 @@ export default function App() {
         </p>
         <button
           className="onboarding-btn"
-          onClick={() => {
-            localStorage.setItem('uncover_onboarded', '1');
-            setPhase('map');
-          }}
+          onClick={handleStartExploring}
         >
           Start Exploring
         </button>
